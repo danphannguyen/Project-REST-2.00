@@ -2,6 +2,12 @@
 var bcrypt = require('bcrypt');
 var jwtUtils = require('../utils/jwt.utils')
 var models = require('../models')
+var asyncLib =  require('async')
+
+// Contants 
+const email_regex = /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+
+const password_regex = /^(?=.*\d).{4,8}$/;
 
 //Routes
 module.exports = {
@@ -19,7 +25,19 @@ module.exports = {
         }
 
         // Verify params : peudo length / mail regex / password etc
+        if(username.length >= 13 || username.length <= 4) {
+            return res.status(400).json({ 'error' : 'username length must be between 5-12 characters' });
+        }
 
+        if (!email_regex.test(email)) {
+            return res.status(400).json({ 'error' : 'email is not valid' });
+        }
+
+        if (!password_regex.test(password)) {
+            return res.status(400).json({ 'error' : 'password invalid (must length 4 - 8 and include 1 number at least' });
+        }
+
+        // Add user
             models.User.findOne({
                 where: { email: email }
             })
@@ -69,7 +87,6 @@ module.exports = {
         }
 
         // Verify email Regex
-
         models.User.findOne({
             where: { email: email }
         })
@@ -94,6 +111,68 @@ module.exports = {
         .catch(function(err) {
             return res.status(500).json({ 'error' : 'unable to verify user' });
         });
+    },
+    getUserProfile: function(req,res) {
+        // Get auth header
+        var headerAuth = req.headers['authorization'];
+        var userId = jwtUtils.getUserId(headerAuth);
 
+        if (userId < 0) {
+            return res.status(400).json({ 'error' : 'wrong token' });
+        }
+
+        models.User.findOne({
+            attributes: ['id', 'email', 'username', 'bio'],
+            where: {id: userId}
+        }).then(function(user){
+            if (user) {
+                res.status(201).json(user);
+            } else {
+                res.status(404).json({ 'error' : 'user not found'});
+            }
+        }).catch(function(err){
+            res.status(500).json({ 'error' : 'cannot fetch user'});
+        });
+    },
+    updateUserProfile: function(req,res) {
+        // Get auth header
+        var headerAuth = req.headers['authorization'];
+        var userId = jwtUtils.getUserId(headerAuth)
+
+        // Params
+        var bio = req.body.bio;
+
+        asyncLib.waterfall([
+            function(done) {
+                models.User.findOne({
+                    attributes: ['id', 'bio'],
+                    where: {id: userId}
+                }).then(function(userFound){
+                    done(null, userFound);
+                })
+                .catch(function(err){
+                    res.status(500).json({ 'error' : 'Unable to verify user'});
+                });
+            },
+            function(userFound, done) {
+                if(userFound) {
+                    userFound.update({
+                        bio: (bio ? bio : userFound.bio)
+                    }).then(function() {
+                        done(userFound);
+                    }).catch(function(err){
+                        res.status(500).json({ 'error' : 'cannot update user'});
+                    })
+                } else {
+                    res.status(404).json({ 'error' : 'user not found'});
+                }
+            },
+        ], function(userFound) {
+            if(userFound) {
+                return res.status(201).json(userFound);
+            } else {
+                return res.status(501).json({ 'error' : 'annot update user profile'});
+            }
+        });
     }
 }
